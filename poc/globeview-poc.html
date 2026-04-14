@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorldMonitor GlobeView POC</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    body { background: #000; overflow: hidden; font-family: monospace; }
+    #container { width: 100vw; height: 100vh; }
+    #info {
+      position: absolute; top: 10px; left: 10px; color: #0f0;
+      background: rgba(0,0,0,0.8); padding: 10px; border-radius: 4px;
+      font-size: 12px; z-index: 10; max-width: 400px;
+    }
+    #info h3 { margin-bottom: 8px; color: #0ff; }
+    #info div { margin: 2px 0; }
+    #controls {
+      position: absolute; bottom: 10px; left: 10px; z-index: 10;
+    }
+    #controls button {
+      background: #333; color: #fff; border: 1px solid #555;
+      padding: 6px 12px; margin: 2px; cursor: pointer; border-radius: 4px;
+    }
+    #controls button:hover { background: #555; }
+    #controls button.active { background: #0af; border-color: #0af; }
+    #tooltip {
+      position: absolute; display: none; background: rgba(0,0,0,0.9);
+      color: #fff; padding: 8px 12px; border-radius: 4px; font-size: 12px;
+      pointer-events: none; z-index: 20; max-width: 300px;
+      border: 1px solid #444;
+    }
+  </style>
+</head>
+<body>
+  <div id="container"></div>
+  <div id="info">
+    <h3>WorldMonitor GlobeView POC</h3>
+    <div>Approach: deck.gl 9.x GlobeView</div>
+    <div>Layers: <span id="layer-count">0</span></div>
+    <div>Points: <span id="point-count">0</span></div>
+    <div>FPS: <span id="fps">--</span></div>
+  </div>
+  <div id="controls">
+    <button onclick="toggleLayer('hotspots')" class="active">Intel Hotspots</button>
+    <button onclick="toggleLayer('bases')">Military Bases</button>
+    <button onclick="toggleLayer('nuclear')">Nuclear Sites</button>
+    <button onclick="toggleLayer('cables')">Undersea Cables</button>
+    <button onclick="toggleLayer('pipelines')">Pipelines</button>
+    <button onclick="toggleLayer('ports')">Ports</button>
+    <button onclick="toggleLayer('datacenters')">AI Datacenters</button>
+    <button onclick="toggleLayer('spaceports')">Spaceports</button>
+    <button onclick="toggleLayer('irradiators')">Gamma Irradiators</button>
+    <button onclick="toggleLayer('economic')">Economic Centers</button>
+  </div>
+  <div id="tooltip"></div>
+
+  <!-- deck.gl via CDN -->
+  <script src="https://unpkg.com/deck.gl@9.2.11/dist.min.js"></script>
+  <script>
+    // ============================================================
+    // Sample data — extracted from WorldMonitor TypeScript configs
+    // ============================================================
+
+    const INTEL_HOTSPOTS = [
+      { id: 'sahel', name: 'Sahel', lat: 14.0, lon: -1.0, subtext: 'Insurgency/Coups', escalationScore: 4 },
+      { id: 'haiti', name: 'Port-au-Prince', lat: 18.5, lon: -72.3, subtext: 'Haiti Crisis', escalationScore: 4 },
+      { id: 'horn_africa', name: 'Horn of Africa', lat: 10.0, lon: 49.0, subtext: 'Piracy/Conflict', escalationScore: 4 },
+      { id: 'moscow', name: 'Moscow', lat: 55.75, lon: 37.6, subtext: 'Kremlin Activity', escalationScore: 4 },
+      { id: 'beijing', name: 'Beijing', lat: 39.9, lon: 116.4, subtext: 'PLA/MSS Activity', escalationScore: 3 },
+      { id: 'kyiv', name: 'Kyiv', lat: 50.45, lon: 30.5, subtext: 'Conflict Zone', escalationScore: 5 },
+      { id: 'taipei', name: 'Taipei', lat: 25.03, lon: 121.5, subtext: 'Strait Watch', escalationScore: 3 },
+      { id: 'tehran', name: 'Tehran', lat: 35.7, lon: 51.4, subtext: 'IRGC Activity', escalationScore: 4 },
+      { id: 'telaviv', name: 'Tel Aviv', lat: 32.1, lon: 34.8, subtext: 'Mossad/IDF', escalationScore: 5 },
+      { id: 'sanaa', name: "Sana'a", lat: 15.4, lon: 44.2, subtext: 'Yemen/Houthis', escalationScore: 4 },
+      { id: 'mexico', name: 'Mexico City', lat: 23.6, lon: -102.5, subtext: 'Cartel Violence', escalationScore: 4 },
+      { id: 'dc', name: 'Washington DC', lat: 38.9, lon: -77.0, subtext: 'Pentagon', escalationScore: 1 },
+      { id: 'silicon_valley', name: 'Silicon Valley', lat: 37.4, lon: -122.1, subtext: 'Tech/AI Hub', escalationScore: 1 },
+    ];
+
+    const NUCLEAR_FACILITIES = [
+      { name: 'Chernobyl', lat: 51.39, lon: 30.1, country: 'Ukraine' },
+      { name: 'Fukushima', lat: 37.42, lon: 141.03, country: 'Japan' },
+      { name: 'Three Mile Island', lat: 40.15, lon: -76.72, country: 'USA' },
+      { name: 'Sellafield', lat: 54.42, lon: -3.5, country: 'UK' },
+      { name: 'Dimona', lat: 31.07, lon: 35.03, country: 'Israel' },
+      { name: 'Yongbyon', lat: 39.8, lon: 125.75, country: 'North Korea' },
+      { name: 'Natanz', lat: 33.72, lon: 51.92, country: 'Iran' },
+      { name: 'Bushehr', lat: 28.83, lon: 50.88, country: 'Iran' },
+    ];
+
+    const SPACEPORTS = [
+      { name: 'Cape Canaveral', lat: 28.39, lon: -80.6, country: 'USA' },
+      { name: 'Baikonur', lat: 45.96, lon: 63.31, country: 'Kazakhstan' },
+      { name: 'Jiuquan', lat: 40.96, lon: 100.29, country: 'China' },
+      { name: 'Kourou', lat: 5.16, lon: -52.65, country: 'French Guiana' },
+      { name: 'Vandenberg', lat: 34.74, lon: -120.57, country: 'USA' },
+      { name: 'Starbase', lat: 25.99, lon: -97.16, country: 'USA' },
+    ];
+
+    const ECONOMIC_CENTERS = [
+      { name: 'New York', lat: 40.71, lon: -74.01 },
+      { name: 'London', lat: 51.51, lon: -0.13 },
+      { name: 'Tokyo', lat: 35.68, lon: 139.69 },
+      { name: 'Shanghai', lat: 31.23, lon: 121.47 },
+      { name: 'Singapore', lat: 1.35, lon: 103.82 },
+      { name: 'Hong Kong', lat: 22.32, lon: 114.17 },
+      { name: 'Dubai', lat: 25.2, lon: 55.27 },
+      { name: 'Frankfurt', lat: 50.11, lon: 8.68 },
+      { name: 'Sydney', lat: -33.87, lon: 151.21 },
+      { name: 'Sao Paulo', lat: -23.55, lon: -46.63 },
+    ];
+
+    // Undersea cables (simplified line segments)
+    const UNDERSEA_CABLES = [
+      { name: 'TAT-14', path: [[-73.99, 40.75], [-9.14, 38.72], [4.9, 52.37], [9.99, 53.55]] },
+      { name: 'SEA-ME-WE 3', path: [[121.47, 31.23], [103.82, 1.35], [72.88, 18.96], [51.53, 25.29], [37.62, 55.76], [-0.13, 51.51]] },
+      { name: 'Africa-1', path: [[-73.99, 40.75], [-9.14, 38.72], [18.42, -33.93], [55.27, 25.2]] },
+      { name: 'Pacific Light', path: [[121.47, 31.23], [139.69, 35.68], [-122.42, 37.77], [-118.24, 34.05]] },
+    ];
+
+    // Pipelines (simplified line segments)
+    const PIPELINES = [
+      { name: 'Nord Stream', path: [[27.9, 60.4], [13.8, 54.2]] },
+      { name: 'Druzhba', path: [[52.0, 53.7], [30.5, 52.2], [21.0, 52.2], [14.5, 52.5]] },
+      { name: 'Trans-Saharan', path: [[9.5, 32.0], [9.5, 28.0], [13.2, 12.0], [3.4, 6.5]] },
+    ];
+
+    // Sample ports
+    const PORTS = [
+      { name: 'Shanghai', lat: 31.23, lon: 121.47, country: 'China' },
+      { name: 'Singapore', lat: 1.26, lon: 103.84, country: 'Singapore' },
+      { name: 'Rotterdam', lat: 51.9, lon: 4.48, country: 'Netherlands' },
+      { name: 'Los Angeles', lat: 33.74, lon: -118.27, country: 'USA' },
+      { name: 'Dubai (Jebel Ali)', lat: 25.01, lon: 55.06, country: 'UAE' },
+      { name: 'Busan', lat: 35.1, lon: 129.04, country: 'South Korea' },
+    ];
+
+    // Sample AI datacenters
+    const AI_DATACENTERS = [
+      { name: 'AWS us-east-1', lat: 39.04, lon: -77.49, provider: 'AWS' },
+      { name: 'Azure West Europe', lat: 52.37, lon: 4.9, provider: 'Azure' },
+      { name: 'GCP us-central1', lat: 41.26, lon: -95.86, provider: 'GCP' },
+      { name: 'NVIDIA DGX Cloud', lat: 37.39, lon: -122.08, provider: 'NVIDIA' },
+      { name: 'CoreWeave', lat: 40.71, lon: -74.01, provider: 'CoreWeave' },
+    ];
+
+    // Gamma irradiators (sample)
+    const GAMMA_IRRADIATORS = [
+      { name: 'Steris', lat: 41.48, lon: -81.67, country: 'USA' },
+      { name: 'Nordion', lat: 45.42, lon: -75.7, country: 'Canada' },
+      { name: 'BBF', lat: 48.52, lon: 9.06, country: 'Germany' },
+      { name: 'Synergy Health', lat: 51.45, lon: -2.59, country: 'UK' },
+    ];
+
+    // ============================================================
+    // deck.gl GlobeView POC
+    // ============================================================
+
+    const { DeckGL, ScatterplotLayer, PathLayer, TextLayer, GlobeView } = deck;
+
+    // Layer visibility state
+    const layerState = {
+      hotspots: true,
+      bases: false,
+      nuclear: false,
+      cables: false,
+      pipelines: false,
+      ports: false,
+      datacenters: false,
+      spaceports: false,
+      irradiators: false,
+      economic: false,
+    };
+
+    let deckgl;
+
+    function getEscalationColor(score) {
+      if (score >= 5) return [255, 0, 0];
+      if (score >= 4) return [255, 140, 0];
+      if (score >= 3) return [255, 200, 0];
+      if (score >= 2) return [100, 200, 255];
+      return [100, 255, 100];
+    }
+
+    function getLayers() {
+      const layers = [];
+
+      // Intel Hotspots
+      if (layerState.hotspots) {
+        layers.push(new ScatterplotLayer({
+          id: 'hotspots',
+          data: INTEL_HOTSPOTS,
+          getPosition: d => [d.lon, d.lat],
+          getRadius: d => 80000 + d.escalationScore * 20000,
+          getFillColor: d => getEscalationColor(d.escalationScore),
+          pickable: true,
+          radiusMinPixels: 4,
+          radiusMaxPixels: 20,
+        }));
+        layers.push(new TextLayer({
+          id: 'hotspot-labels',
+          data: INTEL_HOTSPOTS,
+          getPosition: d => [d.lon, d.lat],
+          getText: d => d.name,
+          getSize: 12,
+          getColor: [255, 255, 255, 200],
+          getPixelOffset: [0, -15],
+          billboard: true,
+          sizeUnits: 'pixels',
+        }));
+      }
+
+      // Nuclear Facilities
+      if (layerState.nuclear) {
+        layers.push(new ScatterplotLayer({
+          id: 'nuclear',
+          data: NUCLEAR_FACILITIES,
+          getPosition: d => [d.lon, d.lat],
+          getRadius: 60000,
+          getFillColor: [255, 255, 0],
+          getLineColor: [255, 0, 0],
+          lineWidthMinPixels: 2,
+          stroked: true,
+          pickable: true,
+          radiusMinPixels: 4,
+        }));
+      }
+
+      // Spaceports
+      if (layerState.spaceports) {
+        layers.push(new ScatterplotLayer({
+          id: 'spaceports',
+          data: SPACEPORTS,
+          getPosition: d => [d.lon, d.lat],
+          getRadius: 50000,
+          getFillColor: [0, 150, 255],
+          pickable: true,
+          radiusMinPixels: 4,
+        }));
+      }
+
+      // Economic Centers
+      if (layerState.economic) {
+        layers.push(new ScatterplotLayer({
+          id: 'economic',
+          data: ECONOMIC_CENTERS,
+          getPosition: d => [d.lon, d.lat],
+          getRadius: 70000,
+          getFillColor: [50, 205, 50],
+          pickable: true,
+          radiusMinPixels: 4,
+        }));
+      }
+
+      // Ports
+      if (layerState.ports) {
+        layers.push(new ScatterplotLayer({
+          id: 'ports',
+          data: PORTS,
+          getPosition: d => [d.lon, d.lat],
+          getRadius: 40000,
+          getFillColor: [0, 200, 200],
+          pickable: true,
+          radiusMinPixels: 3,
+        }));
+      }
+
+      // AI Datacenters
+      if (layerState.datacenters) {
+        layers.push(new ScatterplotLayer({
+          id: 'datacenters',
+          data: AI_DATACENTERS,
+          getPosition: d => [d.lon, d.lat],
+          getRadius: 50000,
+          getFillColor: [180, 0, 255],
+          pickable: true,
+          radiusMinPixels: 4,
+        }));
+      }
+
+      // Gamma Irradiators
+      if (layerState.irradiators) {
+        layers.push(new ScatterplotLayer({
+          id: 'irradiators',
+          data: GAMMA_IRRADIATORS,
+          getPosition: d => [d.lon, d.lat],
+          getRadius: 35000,
+          getFillColor: [255, 100, 100],
+          pickable: true,
+          radiusMinPixels: 3,
+        }));
+      }
+
+      // Undersea Cables
+      if (layerState.cables) {
+        layers.push(new PathLayer({
+          id: 'cables',
+          data: UNDERSEA_CABLES,
+          getPath: d => d.path,
+          getColor: [0, 255, 255, 180],
+          getWidth: 3,
+          widthMinPixels: 2,
+          pickable: true,
+        }));
+      }
+
+      // Pipelines
+      if (layerState.pipelines) {
+        layers.push(new PathLayer({
+          id: 'pipelines',
+          data: PIPELINES,
+          getPath: d => d.path,
+          getColor: [255, 165, 0, 180],
+          getWidth: 3,
+          widthMinPixels: 2,
+          pickable: true,
+        }));
+      }
+
+      return layers;
+    }
+
+    function updateStats() {
+      const activeLayers = Object.values(layerState).filter(Boolean).length;
+      const totalPoints = INTEL_HOTSPOTS.length + NUCLEAR_FACILITIES.length +
+        SPACEPORTS.length + ECONOMIC_CENTERS.length + PORTS.length +
+        AI_DATACENTERS.length + GAMMA_IRRADIATORS.length;
+      document.getElementById('layer-count').textContent = activeLayers;
+      document.getElementById('point-count').textContent = totalPoints;
+    }
+
+    function toggleLayer(name) {
+      layerState[name] = !layerState[name];
+      // Update button state
+      const buttons = document.querySelectorAll('#controls button');
+      buttons.forEach(btn => {
+        if (btn.textContent.toLowerCase().includes(name) ||
+            (name === 'hotspots' && btn.textContent === 'Intel Hotspots') ||
+            (name === 'bases' && btn.textContent === 'Military Bases') ||
+            (name === 'nuclear' && btn.textContent === 'Nuclear Sites') ||
+            (name === 'cables' && btn.textContent === 'Undersea Cables') ||
+            (name === 'pipelines' && btn.textContent === 'Pipelines') ||
+            (name === 'ports' && btn.textContent === 'Ports') ||
+            (name === 'datacenters' && btn.textContent === 'AI Datacenters') ||
+            (name === 'spaceports' && btn.textContent === 'Spaceports') ||
+            (name === 'irradiators' && btn.textContent === 'Gamma Irradiators') ||
+            (name === 'economic' && btn.textContent === 'Economic Centers')) {
+          btn.classList.toggle('active', layerState[name]);
+        }
+      });
+      deckgl.setProps({ layers: getLayers() });
+      updateStats();
+    }
+
+    // FPS counter
+    let frameCount = 0;
+    let lastTime = performance.now();
+    function updateFps() {
+      frameCount++;
+      const now = performance.now();
+      if (now - lastTime >= 1000) {
+        document.getElementById('fps').textContent = frameCount;
+        frameCount = 0;
+        lastTime = now;
+      }
+      requestAnimationFrame(updateFps);
+    }
+    updateFps();
+
+    // Tooltip
+    const tooltip = document.getElementById('tooltip');
+    function showTooltip(info) {
+      if (info.object) {
+        const d = info.object;
+        let html = `<strong>${d.name || 'Unknown'}</strong>`;
+        if (d.subtext) html += `<br><em>${d.subtext}</em>`;
+        if (d.country) html += `<br>Country: ${d.country}`;
+        if (d.provider) html += `<br>Provider: ${d.provider}`;
+        if (d.escalationScore) html += `<br>Escalation: ${d.escalationScore}/5`;
+        tooltip.innerHTML = html;
+        tooltip.style.display = 'block';
+        tooltip.style.left = info.x + 'px';
+        tooltip.style.top = info.y + 'px';
+      } else {
+        tooltip.style.display = 'none';
+      }
+    }
+
+    // Initialize GlobeView
+    deckgl = new DeckGL({
+      container: 'container',
+      views: new GlobeView(),
+      initialViewState: {
+        latitude: 20,
+        longitude: 10,
+        zoom: 1.5,
+        minZoom: 0,
+        maxZoom: 20,
+      },
+      controller: true,
+      layers: getLayers(),
+      getTooltip: showTooltip,
+      pickingRadius: 10,
+    });
+
+    updateStats();
+    console.log('WorldMonitor GlobeView POC initialized');
+    console.log('deck.gl version:', deck.VERSION);
+  </script>
+</body>
+</html>

@@ -1,0 +1,268 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>WorldMonitor CesiumJS POC</title>
+  <script src="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Cesium.js"></script>
+  <link href="https://cesium.com/downloads/cesiumjs/releases/1.124/Build/Cesium/Widgets/widgets.css" rel="stylesheet">
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    #cesiumContainer { width: 100vw; height: 100vh; }
+    #info {
+      position: absolute; top: 10px; left: 10px; color: #0f0;
+      background: rgba(0,0,0,0.8); padding: 10px; border-radius: 4px;
+      font-size: 12px; z-index: 10; max-width: 400px; font-family: monospace;
+    }
+    #info h3 { margin-bottom: 8px; color: #0ff; }
+    #controls {
+      position: absolute; bottom: 10px; left: 10px; z-index: 10;
+    }
+    #controls button {
+      background: #333; color: #fff; border: 1px solid #555;
+      padding: 6px 12px; margin: 2px; cursor: pointer; border-radius: 4px;
+    }
+    #controls button:hover { background: #555; }
+    #controls button.active { background: #0af; border-color: #0af; }
+  </style>
+</head>
+<body>
+  <div id="cesiumContainer"></div>
+  <div id="info">
+    <h3>WorldMonitor CesiumJS POC</h3>
+    <div>Engine: CesiumJS 1.124</div>
+    <div>Entities: <span id="entity-count">0</span></div>
+    <div style="margin-top:8px; color:#ff0">Note: Full CesiumJS rewrite</div>
+    <div style="color:#ff0">All layer code must be recreated as entities</div>
+  </div>
+  <div id="controls">
+    <button onclick="toggleDataSource('hotspots')" class="active">Intel Hotspots</button>
+    <button onclick="toggleDataSource('nuclear')">Nuclear Sites</button>
+    <button onclick="toggleDataSource('spaceports')">Spaceports</button>
+    <button onclick="toggleDataSource('economic')">Economic Centers</button>
+    <button onclick="toggleDataSource('cables')">Undersea Cables</button>
+  </div>
+
+  <script>
+    // Cesium Ion token (public default)
+    Cesium.Ion.defaultAccessToken = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJqdGkiOiJlYWE1OWUxNy1mMWZiLTQzYjYtYTQ0OS1kMWFjYmFkNjc5YzciLCJpZCI6NTc3MzMsImlhdCI6MTYyNzg0NTE4Mn0.XcKpgANiY19MC4bdFUXMVEBToBmqS8kuYpUlxJHYZxk';
+
+    // Initialize CesiumJS viewer
+    const viewer = new Cesium.Viewer('cesiumContainer', {
+      terrain: Cesium.Terrain.fromWorldTerrain(),
+      baseLayerPicker: false,
+      geocoder: false,
+      homeButton: false,
+      sceneModePicker: false,
+      timeline: false,
+      animation: false,
+      fullscreenButton: false,
+      navigationHelpButton: false,
+    });
+
+    // Sample data (same as GlobeView POC)
+    const INTEL_HOTSPOTS = [
+      { id: 'sahel', name: 'Sahel', lat: 14.0, lon: -1.0, subtext: 'Insurgency/Coups', score: 4 },
+      { id: 'haiti', name: 'Port-au-Prince', lat: 18.5, lon: -72.3, subtext: 'Haiti Crisis', score: 4 },
+      { id: 'moscow', name: 'Moscow', lat: 55.75, lon: 37.6, subtext: 'Kremlin Activity', score: 4 },
+      { id: 'beijing', name: 'Beijing', lat: 39.9, lon: 116.4, subtext: 'PLA/MSS', score: 3 },
+      { id: 'kyiv', name: 'Kyiv', lat: 50.45, lon: 30.5, subtext: 'Conflict Zone', score: 5 },
+      { id: 'taipei', name: 'Taipei', lat: 25.03, lon: 121.5, subtext: 'Strait Watch', score: 3 },
+      { id: 'tehran', name: 'Tehran', lat: 35.7, lon: 51.4, subtext: 'IRGC Activity', score: 4 },
+      { id: 'telaviv', name: 'Tel Aviv', lat: 32.1, lon: 34.8, subtext: 'Mossad/IDF', score: 5 },
+      { id: 'dc', name: 'Washington DC', lat: 38.9, lon: -77.0, subtext: 'Pentagon', score: 1 },
+    ];
+
+    const NUCLEAR_FACILITIES = [
+      { name: 'Chernobyl', lat: 51.39, lon: 30.1 },
+      { name: 'Fukushima', lat: 37.42, lon: 141.03 },
+      { name: 'Three Mile Island', lat: 40.15, lon: -76.72 },
+      { name: 'Sellafield', lat: 54.42, lon: -3.5 },
+      { name: 'Dimona', lat: 31.07, lon: 35.03 },
+      { name: 'Yongbyon', lat: 39.8, lon: 125.75 },
+      { name: 'Natanz', lat: 33.72, lon: 51.92 },
+    ];
+
+    const SPACEPORTS = [
+      { name: 'Cape Canaveral', lat: 28.39, lon: -80.6 },
+      { name: 'Baikonur', lat: 45.96, lon: 63.31 },
+      { name: 'Jiuquan', lat: 40.96, lon: 100.29 },
+      { name: 'Kourou', lat: 5.16, lon: -52.65 },
+      { name: 'Starbase', lat: 25.99, lon: -97.16 },
+    ];
+
+    const ECONOMIC_CENTERS = [
+      { name: 'New York', lat: 40.71, lon: -74.01 },
+      { name: 'London', lat: 51.51, lon: -0.13 },
+      { name: 'Tokyo', lat: 35.68, lon: 139.69 },
+      { name: 'Shanghai', lat: 31.23, lon: 121.47 },
+      { name: 'Singapore', lat: 1.35, lon: 103.82 },
+    ];
+
+    function getEscalationColor(score) {
+      if (score >= 5) return Cesium.Color.RED;
+      if (score >= 4) return Cesium.Color.ORANGE;
+      if (score >= 3) return Cesium.Color.YELLOW;
+      return Cesium.Color.GREEN;
+    }
+
+    // Create data sources
+    const dataSources = {};
+
+    // Hotspots
+    const hotspotsDS = new Cesium.CustomDataSource('hotspots');
+    INTEL_HOTSPOTS.forEach(h => {
+      hotspotsDS.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(h.lon, h.lat),
+        point: {
+          pixelSize: 8 + h.score * 2,
+          color: getEscalationColor(h.score),
+          outlineColor: Cesium.Color.WHITE,
+          outlineWidth: 1,
+          scaleByDistance: new Cesium.NearFarScalar(1e6, 1.5, 1e8, 0.5),
+        },
+        label: {
+          text: h.name,
+          font: '12px monospace',
+          fillColor: Cesium.Color.WHITE,
+          style: Cesium.LabelStyle.FILL_AND_OUTLINE,
+          outlineWidth: 2,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -12),
+          scaleByDistance: new Cesium.NearFarScalar(1e6, 1.2, 1e8, 0.5),
+        },
+        description: `<h3>${h.name}</h3><p>${h.subtext}</p><p>Escalation: ${h.score}/5</p>`,
+      });
+    });
+    dataSources.hotspots = hotspotsDS;
+
+    // Nuclear
+    const nuclearDS = new Cesium.CustomDataSource('nuclear');
+    NUCLEAR_FACILITIES.forEach(n => {
+      nuclearDS.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(n.lon, n.lat),
+        point: {
+          pixelSize: 8,
+          color: Cesium.Color.YELLOW,
+          outlineColor: Cesium.Color.RED,
+          outlineWidth: 2,
+        },
+        label: {
+          text: '☢ ' + n.name,
+          font: '11px monospace',
+          fillColor: Cesium.Color.YELLOW,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -12),
+        },
+        description: `<h3>${n.name}</h3><p>Nuclear Facility</p>`,
+      });
+    });
+    dataSources.nuclear = nuclearDS;
+
+    // Spaceports
+    const spaceportsDS = new Cesium.CustomDataSource('spaceports');
+    SPACEPORTS.forEach(s => {
+      spaceportsDS.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(s.lon, s.lat),
+        point: {
+          pixelSize: 8,
+          color: Cesium.Color.CORNFLOWERBLUE,
+          outlineColor: Cesium.Color.WHITE,
+          outlineWidth: 1,
+        },
+        label: {
+          text: '🚀 ' + s.name,
+          font: '11px monospace',
+          fillColor: Cesium.Color.CORNFLOWERBLUE,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -12),
+        },
+        description: `<h3>${s.name}</h3><p>Spaceport</p>`,
+      });
+    });
+    dataSources.spaceports = spaceportsDS;
+
+    // Economic Centers
+    const economicDS = new Cesium.CustomDataSource('economic');
+    ECONOMIC_CENTERS.forEach(e => {
+      economicDS.entities.add({
+        position: Cesium.Cartesian3.fromDegrees(e.lon, e.lat),
+        point: {
+          pixelSize: 7,
+          color: Cesium.Color.LIME,
+          outlineColor: Cesium.Color.WHITE,
+          outlineWidth: 1,
+        },
+        label: {
+          text: '💰 ' + e.name,
+          font: '11px monospace',
+          fillColor: Cesium.Color.LIME,
+          verticalOrigin: Cesium.VerticalOrigin.BOTTOM,
+          pixelOffset: new Cesium.Cartesian2(0, -12),
+        },
+      });
+    });
+    dataSources.economic = economicDS;
+
+    // Undersea Cables (polylines)
+    const cablesDS = new Cesium.CustomDataSource('cables');
+    const cablePaths = [
+      [[-73.99, 40.75], [-9.14, 38.72], [4.9, 52.37], [9.99, 53.55]],
+      [[121.47, 31.23], [103.82, 1.35], [72.88, 18.96], [51.53, 25.29], [-0.13, 51.51]],
+    ];
+    cablePaths.forEach((path, i) => {
+      cablesDS.entities.add({
+        polyline: {
+          positions: path.map(p => Cesium.Cartesian3.fromDegrees(p[0], p[1])),
+          width: 2,
+          material: new Cesium.PolylineGlowMaterialProperty({
+            color: Cesium.Color.CYAN.withAlpha(0.8),
+            glowPower: 0.2,
+          }),
+          clampToGround: true,
+        },
+        name: `Cable ${i + 1}`,
+      });
+    });
+    dataSources.cables = cablesDS;
+
+    // Add all enabled data sources
+    let entityCount = 0;
+    Object.entries(dataSources).forEach(([key, ds]) => {
+      viewer.dataSources.add(ds);
+      ds.show = key === 'hotspots';
+      entityCount += ds.entities.values.length;
+    });
+    document.getElementById('entity-count').textContent = entityCount;
+
+    // Toggle function
+    function toggleDataSource(name) {
+      const ds = dataSources[name];
+      if (ds) {
+        ds.show = !ds.show;
+        // Update button
+        const buttons = document.querySelectorAll('#controls button');
+        buttons.forEach(btn => {
+          if (btn.textContent.toLowerCase().includes(name) ||
+              (name === 'hotspots' && btn.textContent === 'Intel Hotspots') ||
+              (name === 'nuclear' && btn.textContent === 'Nuclear Sites') ||
+              (name === 'spaceports' && btn.textContent === 'Spaceports') ||
+              (name === 'economic' && btn.textContent === 'Economic Centers') ||
+              (name === 'cables' && btn.textContent === 'Undersea Cables')) {
+            btn.classList.toggle('active', ds.show);
+          }
+        });
+      }
+    }
+
+    // Fly to a good initial view
+    viewer.camera.flyTo({
+      destination: Cesium.Cartesian3.fromDegrees(20, 25, 20000000),
+      orientation: { heading: 0, pitch: -Cesium.Math.PI_OVER_TWO, roll: 0 },
+    });
+
+    console.log('WorldMonitor CesiumJS POC initialized');
+    console.log('CesiumJS version:', Cesium.VERSION);
+  </script>
+</body>
+</html>
